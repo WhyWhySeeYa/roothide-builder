@@ -1,5 +1,2 @@
-glass-rc7-backport
-glass-rc7-speed-test
-roothide-3.x-upstream-sync-v4
 runtime/rc9-audit
 stable/rc7-glass
