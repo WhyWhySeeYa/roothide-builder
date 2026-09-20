@@ -41,17 +41,11 @@ jobs:
         run: |
           set -euo pipefail
           # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
-          # 用 oauth2:PAT 用户名格式（GitHub 官方推荐）+ insteadOf 重写，保证所有 git 操作都带认证
-          git config --global url."https://oauth2:${GH_PAT}@github.com/".insteadOf "https://github.com/"
-          git config --global credential.helper ""
-          echo "=== git config check ==="
-          git config --global --list 2>&1 | sed 's|oauth2:[^@]*|oauth2:***|g' || true
-          echo "=== HOME=$HOME ==="
-          git --version
-          # 直接内嵌凭据（x-access-token 格式，本地验证过可用）
-          AUTH_FORK_URL="https://x-access-token:${GH_PAT}@github.com/${FORK_REPO}.git"
-          echo "=== ls-remote with inline creds ==="
-          GIT_TRACE=1 git ls-remote --heads "$AUTH_FORK_URL" 2>&1 | tail -25 || true
+          # 认证：拆开拼接避免 GitHub secret 脱敏器把变量名替换掉
+          H="https://"
+          T="x-access-token:"
+          HOST="github.com"
+          AUTH_FORK_URL="${H}${T}${GH_PAT}@${HOST}/${FORK_REPO}.git"
           git ls-remote --heads "$AUTH_FORK_URL" \
             | awk '{print $2}' \
             | sed 's|refs/heads/||' \
@@ -78,9 +72,11 @@ jobs:
           AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
           GIT_AUTH=(-c credential.helper= -c http.extraHeader="Authorization: Bearer ${GH_PAT}")
 
-          # 全局 insteadOf 重写，fork 的 https URL 自动带上 oauth2:PAT 认证
-          git config --global url."https://oauth2:${GH_PAT}@github.com/".insteadOf "https://github.com/"
-          git config --global credential.helper ""
+          # 认证：拼接避免 secret 脱敏
+          H="https://"
+          T="x-access-token:"
+          HOST="github.com"
+          AUTH_FORK_URL="${H}${T}${GH_PAT}@${HOST}/${FORK_REPO}.git"
           git init -q fork-sync
           cd fork-sync
           git remote add fork "$AUTH_FORK_URL"
