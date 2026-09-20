@@ -45,8 +45,8 @@ jobs:
           git config --global url."https://oauth2:${GH_PAT}@github.com/".insteadOf "https://github.com/"
           git config --global credential.helper ""
           echo "=== git config check ==="
-          git config --global --get-regexp 'url.*' || true
-          git config --global --get credential.helper || echo "no helper"
+          git config --global --list 2>&1 | sed 's|oauth2:[^@]*|oauth2:***|g' || true
+          echo "=== HOME=$HOME ==="
           AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
           echo "=== ls-remote with rewrite ==="
           GIT_TRACE=1 git ls-remote --heads "$AUTH_FORK_URL" 2>&1 | tail -20 || true
