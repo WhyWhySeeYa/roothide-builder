@@ -44,10 +44,18 @@ jobs:
           env | grep -E 'GIT_CONFIG|GIT_ASKPASS|GIT_TERMINAL' || echo "(none)"
           echo "=== global config ==="
           git config --global --list 2>/dev/null | sed 's/extraheader.*/extraheader=<redacted>/' || echo "(empty)"
+          # 终极诊断
+          echo "=== FORK_REPO=[${FORK_REPO}] GH_PAT_len=${#GH_PAT} ==="
+          echo "=== curl git protocol with PAT ==="
+          curl -s -o /tmp/refs.out -w "HTTP %{http_code}\n" \
+            -H "Authorization: Bearer ${GH_PAT}" \
+            "https://github.com/${FORK_REPO}.git/info/refs?service=git-upload-pack"
+          head -c 200 /tmp/refs.out | head -2; echo
           # 认证方案：用 credential 文件（store helper），完全避开 URL 内嵌凭据
           CRED_FILE="$(pwd)/.git-credential"
           printf 'https://x-access-token:%s@github.com\n' "$GH_PAT" > "$CRED_FILE"
           chmod 600 "$CRED_FILE"
+          echo "=== cred file bytes: $(wc -c < "$CRED_FILE") ==="
           # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
           git -c credential.helper="store --file=$CRED_FILE" ls-remote --heads "https://github.com/${FORK_REPO}.git" \
             | awk '{print $2}' \
