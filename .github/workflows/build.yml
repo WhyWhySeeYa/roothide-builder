@@ -1,0 +1,199 @@
+name: Build upstream RootHide & release to private
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: '上游分支'
+        required: false
+        default: 'glass-rc7-speed-test'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: builder
+  cancel-in-progress: true
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+  THEOS_COMMIT: 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
+  IOS_SDK_VERSION: "16.5"
+  TRUSTCACHE_COMMIT: aa0e8847529cf76576fce8d2dbc9e088c8f1a0df
+  UPSTREAM_REPO: https://github.com/kulinichx/RootHide.git
+  TARGET_REPO: WhyWhySeeYa/RootHide
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout builder repo (workflow only)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch upstream branch
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.event.inputs.upstream_branch }}"
+          git init -q source
+          cd source
+          git remote add origin "$UPSTREAM_REPO"
+          git fetch --depth 1 origin "$BRANCH"
+          git checkout -q FETCH_HEAD
+          git submodule update --init --recursive
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "branch=${BRANCH}" >> "$GITHUB_ENV"
+          echo "fetched $BRANCH @ $(git rev-parse --short HEAD)"
+          cd ..
+
+      - name: Inject auto-auth.py from Secret
+        run: |
+          set -euo pipefail
+          if [ -z "$AUTO_AUTH_B64" ]; then
+            echo "::error::Secret AUTO_AUTH_B64 is not set"
+            exit 1
+          fi
+          echo "$AUTO_AUTH_B64" | base64 -d > source/.github/scripts/auto-auth.py
+          chmod +x source/.github/scripts/auto-auth.py
+          echo "auto-auth.py injected: $(wc -l < source/.github/scripts/auto-auth.py) lines"
+        env:
+          AUTO_AUTH_B64: ${{ secrets.AUTO_AUTH_B64 }}
+
+      - name: Apply auto-auth patch
+        run: |
+          set -euo pipefail
+          cd source
+          python3 .github/scripts/auto-auth.py
+          git add Application/
+          # 不 commit，直接构建即可；记录 patch 状态
+          git diff --stat --cached | tail -3
+
+      - name: Apply submodule patches
+        run: |
+          set -euo pipefail
+          cd source
+          git -C BaseBin/XPF apply "$GITHUB_WORKSPACE/source/.github/patches/XPF-roothide.patch" 2>/dev/null || echo "XPF patch skipped or applied"
+          git -C BaseBin/opainject apply "$GITHUB_WORKSPACE/source/.github/patches/opainject-build.patch" 2>/dev/null || echo "opainject patch skipped or applied"
+
+      - name: Capture source provenance
+        run: |
+          set -euo pipefail
+          cd source
+          mkdir -p artifacts
+          {
+            echo "upstream_repo=$UPSTREAM_REPO"
+            echo "upstream_branch=${branch}"
+            echo "upstream_sha=${sha}"
+            echo "builder=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+            echo "version=$(tr -d '\r\n' < BaseBin/_external/basebin/.version 2>/dev/null || echo unknown)"
+            echo "xcode_requested=15.4"
+            echo "theos_commit=$THEOS_COMMIT"
+            echo "trustcache_commit=$TRUSTCACHE_COMMIT"
+            echo "auto_auth_applied=true"
+          } > artifacts/source-provenance.txt
+          cat artifacts/source-provenance.txt
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.4"
+
+      - name: Install Procursus tools
+        uses: dhinakg/procursus-action@main
+        with:
+          packages: ldid findutils sed coreutils
+
+      - name: Install host dependencies
+        run: |
+          set -euo pipefail
+          brew install make libarchive openssl@3 xz
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Theos
+        id: cache-theos
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.THEOS }}
+          key: theos-${{ runner.os }}-${{ runner.arch }}-${{ env.THEOS_COMMIT }}-sdk${{ env.IOS_SDK_VERSION }}
+
+      - name: Install Theos and iOS SDK
+        if: steps.cache-theos.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/roothide/theos.git "$THEOS"
+          git -C "$THEOS" checkout --detach "$THEOS_COMMIT"
+          git -C "$THEOS" submodule update --init --recursive
+          mkdir -p "$THEOS/sdks"
+          sdk_archive="$RUNNER_TEMP/iPhoneOS${IOS_SDK_VERSION}.sdk.tar.xz"
+          curl --fail --location --retry 3 \
+            "https://github.com/theos/sdks/releases/latest/download/iPhoneOS${IOS_SDK_VERSION}.sdk.tar.xz" \
+            --output "$sdk_archive"
+          tar -xJf "$sdk_archive" -C "$THEOS/sdks"
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-xcode15.4-${{ hashFiles('**/Package.swift', '**/project.pbxproj') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-xcode15.4-
+
+      - name: Build trustcache
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/trustcache"
+          git clone https://github.com/CRKatri/trustcache.git "$source_dir"
+          git -C "$source_dir" checkout --detach "$TRUSTCACHE_COMMIT"
+          openssl_prefix="$(brew --prefix openssl@3)"
+          make -C "$source_dir" -j"$(sysctl -n hw.logicalcpu)" OPENSSL=1 \
+            CFLAGS="-DOPENSSL -I${openssl_prefix}/include" \
+            LDFLAGS="-L${openssl_prefix}/lib"
+          make -C "$source_dir" install PREFIX="$HOME/.local"
+
+      - name: Verify build environment
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "17.5"
+          test -d "$THEOS/sdks/iPhoneOS${IOS_SDK_VERSION}.sdk"
+          command -v make ldid
+          command -v trustcache
+
+      - name: Full build TIPA
+        run: |
+          set -euo pipefail
+          cd source
+          export CLANG_MODULE_CACHE_PATH="$RUNNER_TEMP/clang-module-cache"
+          mkdir -p "$CLANG_MODULE_CACHE_PATH"
+          make -j"$(sysctl -n hw.logicalcpu)" NIGHTLY=1
+          version="$(cat BaseBin/_external/basebin/.version)-$(git rev-parse --short HEAD)"
+          artifact="Dopamine_${version}_roothide.tipa"
+          cp Application/Dopamine.tipa "Application/${artifact}"
+          echo "artifact=${artifact}" >> "$GITHUB_ENV"
+          ls -la "Application/${artifact}"
+
+      - name: Upload to private repo Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          cd source
+          TAG="auto-${sha:0:10}"
+          # 已存在则跳过
+          if gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists in $TARGET_REPO, skipping."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            "Application/${artifact}" \
+            "artifacts/source-provenance.txt" \
+            --repo "$TARGET_REPO" \
+            --title "Dopamine RH auto build (${branch})" \
+            --notes "Upstream ${branch} @ ${sha} | patches: auto-auth (injected via CI secret)"
+          echo "Released to $TARGET_REPO: $TAG"
