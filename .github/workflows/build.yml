@@ -21,6 +21,7 @@ env:
   IOS_SDK_VERSION: "16.5"
   TRUSTCACHE_COMMIT: aa0e8847529cf76576fce8d2dbc9e088c8f1a0df
   UPSTREAM_REPO: https://github.com/kulinichx/RootHide.git
+  FORK_REPO: WhyWhySeeYa/RootHide
   TARGET_REPO: WhyWhySeeYa/RootHide
 
 jobs:
@@ -35,10 +36,13 @@ jobs:
           fetch-depth: 1
 
       - name: Refresh branch list for Shortcuts picker
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
-          # 拉取上游全部分支，写入 branches.txt（快捷指令用纯文本选择）
-          git ls-remote --heads "$UPSTREAM_REPO" \
+          # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
+          AUTH_FORK_URL="https://x-access-token:${GH_PAT}@github.com/${FORK_REPO}.git"
+          git ls-remote --heads "$AUTH_FORK_URL" \
             | awk '{print $2}' \
             | sed 's|refs/heads/||' \
             | sort > branches.txt
@@ -55,20 +59,45 @@ jobs:
             echo "branches.txt unchanged"
           fi
 
-      - name: Fetch upstream branch
+      - name: Sync fork from upstream, then fetch branch
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
           BRANCH="${{ github.event.inputs.upstream_branch }}"
-          git init -q source
-          cd source
-          git remote add origin "$UPSTREAM_REPO"
-          git fetch --depth 1 origin "$BRANCH"
-          git checkout -q FETCH_HEAD
+          AUTH_FORK_URL="https://x-access-token:${GH_PAT}@github.com/${FORK_REPO}.git"
+
+          git init -q fork-sync
+          cd fork-sync
+          git remote add fork "$AUTH_FORK_URL"
+          git remote add upstream "$UPSTREAM_REPO"
+
+          # 拉取 fork 分支（浅历史）
+          git fetch --depth 1 fork "$BRANCH" || { echo "::error::fork 分支 $BRANCH 不存在"; exit 1; }
+          git checkout -q -b work FETCH_HEAD
+          echo "fork $BRANCH @ $(git rev-parse --short HEAD)"
+
+          # 拉上游同分支（若存在），merge 进 fork（保留 fork 侧改动）
+          if git fetch --depth 1 upstream "$BRANCH" 2>/dev/null; then
+            echo "upstream $BRANCH @ $(git rev-parse --short FETCH_HEAD)"
+            git merge --no-edit FETCH_HEAD 2>/dev/null || git merge --no-edit --strategy=ours FETCH_HEAD
+            echo "merged upstream into fork branch"
+          else
+            echo "upstream has no branch $BRANCH, using fork as-is"
+          fi
+
+          # 把合并结果推回 fork（保持 fork 与上游同步）
+          git push fork work:"$BRANCH" 2>&1 | tail -1 || echo "push to fork skipped (read-only?)"
+
+          # 更新 submodules
           git submodule update --init --recursive
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "branch=${BRANCH}" >> "$GITHUB_ENV"
-          echo "fetched $BRANCH @ $(git rev-parse --short HEAD)"
           cd ..
+
+          # source 目录 = 合并后的完整源码（供后续步骤使用）
+          mv fork-sync source
+          echo "source ready from fork ${FORK_REPO} @ ${BRANCH}"
 
       - name: Inject auto-auth.py from Secret
         run: |
