@@ -35,6 +35,12 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Debug GH_PAT fingerprint
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          echo "prefix=${GH_PAT:0:4} suffix=${GH_PAT: -4} len=${#GH_PAT}"
+
       - name: Refresh branch list for Shortcuts picker
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
