@@ -44,7 +44,12 @@ jobs:
           # 用 oauth2:PAT 用户名格式（GitHub 官方推荐）+ insteadOf 重写，保证所有 git 操作都带认证
           git config --global url."https://oauth2:${GH_PAT}@github.com/".insteadOf "https://github.com/"
           git config --global credential.helper ""
+          echo "=== git config check ==="
+          git config --global --get-regexp 'url.*' || true
+          git config --global --get credential.helper || echo "no helper"
           AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
+          echo "=== ls-remote with rewrite ==="
+          GIT_TRACE=1 git ls-remote --heads "$AUTH_FORK_URL" 2>&1 | tail -20 || true
           git ls-remote --heads "$AUTH_FORK_URL" \
             | awk '{print $2}' \
             | sed 's|refs/heads/||' \
