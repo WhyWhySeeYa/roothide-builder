@@ -116,7 +116,7 @@ jobs:
           echo "branch=${BRANCH}" >> "$GITHUB_ENV"
           echo "source ready from fork ${FORK_REPO} @ ${BRANCH}"
 
-      - name: Inject auto-auth.py from Secret
+      - name: Inject auto-auth.py + whitelist UI template from Secrets
         run: |
           set -euo pipefail
           if [ -z "$AUTO_AUTH_B64" ]; then
@@ -127,8 +127,17 @@ jobs:
           echo "$AUTO_AUTH_B64" | base64 -d > source/.github/scripts/auto-auth.py
           chmod +x source/.github/scripts/auto-auth.py
           echo "auto-auth.py injected: $(wc -l < source/.github/scripts/auto-auth.py) lines"
+
+          # 白名单 UI 模板（可选；缺失时脚本自动跳过第四段）
+          if [ -n "$WL_TEMPLATE_B64" ]; then
+            echo "$WL_TEMPLATE_B64" | base64 -d > source/.github/scripts/wl_ui_template.m
+            echo "wl_ui_template.m injected: $(wc -l < source/.github/scripts/wl_ui_template.m) lines"
+          else
+            echo "WL_TEMPLATE_B64 not set, whitelist UI will be skipped"
+          fi
         env:
           AUTO_AUTH_B64: ${{ secrets.AUTO_AUTH_B64 }}
+          WL_TEMPLATE_B64: ${{ secrets.WL_TEMPLATE_B64 }}
 
       - name: Apply auto-auth patch
         run: |
