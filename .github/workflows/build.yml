@@ -35,20 +35,15 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Debug GH_PAT fingerprint
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
-        run: |
-          echo "prefix=${GH_PAT:0:4} suffix=${GH_PAT: -4} len=${#GH_PAT}"
-
       - name: Refresh branch list for Shortcuts picker
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
           # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
-          AUTH_FORK_URL="https://${GH_PAT}@github.com/${FORK_REPO}.git"
-          git ls-remote --heads "$AUTH_FORK_URL" \
+          AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
+          GIT_AUTH=(-c credential.helper= -c http.extraHeader="Authorization: Bearer ${GH_PAT}")
+          git "${GIT_AUTH[@]}" ls-remote --heads "$AUTH_FORK_URL" \
             | awk '{print $2}' \
             | sed 's|refs/heads/||' \
             | sort > branches.txt
@@ -71,12 +66,15 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="${{ github.event.inputs.upstream_branch }}"
-          AUTH_FORK_URL="https://${GH_PAT}@github.com/${FORK_REPO}.git"
+          AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
+          GIT_AUTH=(-c credential.helper= -c http.extraHeader="Authorization: Bearer ${GH_PAT}")
 
           git init -q fork-sync
           cd fork-sync
           git remote add fork "$AUTH_FORK_URL"
           git remote add upstream "$UPSTREAM_REPO"
+          git config --local credential.helper ""
+          git config --local http.extraHeader "Authorization: Bearer ${GH_PAT}"
 
           # 拉取 fork 分支（浅历史）
           git fetch --depth 1 fork "$BRANCH" || { echo "::error::fork 分支 $BRANCH 不存在"; exit 1; }
