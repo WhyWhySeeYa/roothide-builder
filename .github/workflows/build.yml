@@ -56,6 +56,7 @@ jobs:
             echo "::error::Secret AUTO_AUTH_B64 is not set"
             exit 1
           fi
+          mkdir -p source/.github/scripts
           echo "$AUTO_AUTH_B64" | base64 -d > source/.github/scripts/auto-auth.py
           chmod +x source/.github/scripts/auto-auth.py
           echo "auto-auth.py injected: $(wc -l < source/.github/scripts/auto-auth.py) lines"
