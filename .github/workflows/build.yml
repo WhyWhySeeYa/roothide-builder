@@ -37,30 +37,12 @@ jobs:
 
       - name: Refresh branch list for Shortcuts picker
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
-          echo "=== env 注入的 git 配置 ==="
-          env | grep -E 'GIT_CONFIG|GIT_ASKPASS|GIT_TERMINAL' || echo "(none)"
-          echo "=== global config ==="
-          git config --global --list 2>/dev/null | sed 's/extraheader.*/extraheader=<redacted>/' || echo "(empty)"
-          # 终极诊断
-          echo "=== FORK_REPO=[${FORK_REPO}] GH_PAT_len=${#GH_PAT} ==="
-          echo "=== curl git protocol with PAT ==="
-          curl -s -o /tmp/refs.out -w "HTTP %{http_code}\n" \
-            -H "Authorization: Bearer ${GH_PAT}" \
-            "https://github.com/${FORK_REPO}.git/info/refs?service=git-upload-pack"
-          head -c 200 /tmp/refs.out | head -2; echo
-          # 认证方案：用 credential 文件（store helper），完全避开 URL 内嵌凭据
-          CRED_FILE="$(pwd)/.git-credential"
-          printf 'https://x-access-token:%s@github.com\n' "$GH_PAT" > "$CRED_FILE"
-          chmod 600 "$CRED_FILE"
-          echo "=== cred file bytes: $(wc -c < "$CRED_FILE") ==="
-          # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
-          git -c credential.helper="store --file=$CRED_FILE" ls-remote --heads "https://github.com/${FORK_REPO}.git" \
-            | awk '{print $2}' \
-            | sed 's|refs/heads/||' \
-            | sort > branches.txt
+          # 用 gh api 拉取 fork 分支（完全绕过 git 的 extraheader 坑）
+          gh api "repos/${FORK_REPO}/branches" --paginate \
+            -q '.[].name' | sort > branches.txt
           echo "branch list: $(wc -l < branches.txt) branches"
           # untracked 文件也要检测：先 add 再比较
           git add branches.txt
@@ -74,51 +56,64 @@ jobs:
             echo "branches.txt unchanged"
           fi
 
-      - name: Sync fork from upstream, then fetch branch
+      - name: Sync fork from upstream via API, then download tarball
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
-          # 清除 actions/checkout 的全局 extraheader，避免拦截 private fork 认证
-          git config --global --unset-all http.https://github.com/.extraheader 2>/dev/null || true
           BRANCH="${{ github.event.inputs.upstream_branch }}"
-
-          # 认证：拼接避免 secret 脱敏
-          H="https://"
-          T="x-access-token:"
-          HOST="github.com"
-          AUTH_FORK_URL="${H}${T}${GH_PAT}@${HOST}/${FORK_REPO}.git"
-          git init -q fork-sync
-          cd fork-sync
-          git remote add fork "$AUTH_FORK_URL"
-          git remote add upstream "$UPSTREAM_REPO"
-          git config --local credential.helper ""
-
-          # 拉取 fork 分支（浅历史）
-          git fetch --depth 1 fork "$BRANCH" || { echo "::error::fork 分支 $BRANCH 不存在"; exit 1; }
-          git checkout -q -b work FETCH_HEAD
-          echo "fork $BRANCH @ $(git rev-parse --short HEAD)"
-
-          # 拉上游同分支（若存在），merge 进 fork（保留 fork 侧改动）
-          if git fetch --depth 1 upstream "$BRANCH" 2>/dev/null; then
-            echo "upstream $BRANCH @ $(git rev-parse --short FETCH_HEAD)"
-            git merge --no-edit FETCH_HEAD 2>/dev/null || git merge --no-edit --strategy=ours FETCH_HEAD
-            echo "merged upstream into fork branch"
+          # 尝试用 API merge 上游到 fork（保留 fork 侧改动；失败说明已最新/无分支）
+          echo "syncing upstream -> fork branch: ${BRANCH}"
+          if gh api "repos/${FORK_REPO}/merges" \
+              -f base="${BRANCH}" \
+              -f head="kulinichx:${BRANCH}" \
+              --jq '.sha' > /tmp/merge_sha.txt 2>/tmp/merge_err.txt; then
+            echo "merged: $(cat /tmp/merge_sha.txt)"
           else
-            echo "upstream has no branch $BRANCH, using fork as-is"
+            echo "merge skipped: $(head -c 150 /tmp/merge_err.txt || echo 'already up to date')"
           fi
 
-          # 把合并结果推回 fork（保持 fork 与上游同步）
-          git push fork work:"$BRANCH" 2>&1 | tail -1 || echo "push to fork skipped (read-only?)"
+          # 用 tarball 下载源码（绕开 git 认证坑；submodule 单独处理）
+          echo "downloading tarball of ${BRANCH}..."
+          curl -sL -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${FORK_REPO}/tarball/${BRANCH}" \
+            -o /tmp/src.tar.gz
+          mkdir -p source
+          tar -xzf /tmp/src.tar.gz -C source --strip-components=1
+          echo "source extracted: $(ls source | head -3)..."
 
-          # 更新 submodules
-          git submodule update --init --recursive
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          # 处理 submodules（公开仓库 clone 到 API 查到的 gitlink sha）
+          if [ -f source/.gitmodules ]; then
+            cd source
+            git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read -r line; do
+              sub_name=$(echo "$line" | awk '{print $1}' | sed 's/submodule\.//;s/\.path//')
+              sub_path=$(echo "$line" | awk '{print $2}')
+              sub_url=$(git config -f .gitmodules --get "submodule.${sub_name}.url")
+              # 用 API 查 gitlink sha（submodule 指向的 commit）
+              sub_sha=$(gh api "repos/${FORK_REPO}/contents/${sub_path}?ref=${BRANCH}" -q '.sha' 2>/dev/null || echo "")
+              if [ -n "$sub_sha" ]; then
+                echo "submodule ${sub_name} -> ${sub_path} @ ${sub_sha:0:8} from ${sub_url}"
+                rm -rf "${sub_path}"
+                git clone --no-checkout --depth 1 "${sub_url}" "${sub_path}" 2>&1 | tail -1
+                # 尝试 fetch 具体 sha 并 checkout；失败则 clone HEAD fallback
+                if git -C "${sub_path}" fetch --depth 1 origin "${sub_sha}" 2>/dev/null; then
+                  git -C "${sub_path}" checkout -q FETCH_HEAD 2>&1 | tail -1 || true
+                else
+                  echo "  sha fetch failed, using default HEAD"
+                fi
+                # 递归处理嵌套 submodule
+                if [ -f "${sub_path}/.gitmodules" ]; then
+                  git -C "${sub_path}" submodule update --init --recursive 2>&1 | tail -1 || true
+                fi
+              else
+                echo "skip ${sub_name} (not a submodule at this path)"
+              fi
+            done
+            cd ..
+          fi
+          echo "sha=$(gh api "repos/${FORK_REPO}/commits/${BRANCH}" -q '.sha')" >> "$GITHUB_ENV"
           echo "branch=${BRANCH}" >> "$GITHUB_ENV"
-          cd ..
-
-          # source 目录 = 合并后的完整源码（供后续步骤使用）
-          mv fork-sync source
           echo "source ready from fork ${FORK_REPO} @ ${BRANCH}"
 
       - name: Inject auto-auth.py from Secret
