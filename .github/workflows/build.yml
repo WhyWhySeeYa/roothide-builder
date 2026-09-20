@@ -40,6 +40,12 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
+          # 诊断：API 认证测试
+          code=$(curl -s -o /tmp/api_test.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_PAT}" \
+            "https://api.github.com/repos/${FORK_REPO}")
+          echo "API status: ${code}"
+          head -c 120 /tmp/api_test.json; echo
           # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
           AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
           GIT_AUTH=(-c credential.helper= -c http.extraHeader="Authorization: Bearer ${GH_PAT}")
