@@ -47,9 +47,11 @@ jobs:
           echo "=== git config check ==="
           git config --global --list 2>&1 | sed 's|oauth2:[^@]*|oauth2:***|g' || true
           echo "=== HOME=$HOME ==="
-          AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
-          echo "=== ls-remote with rewrite ==="
-          GIT_TRACE=1 git ls-remote --heads "$AUTH_FORK_URL" 2>&1 | tail -20 || true
+          git --version
+          # 直接内嵌凭据（x-access-token 格式，本地验证过可用）
+          AUTH_FORK_URL="https://x-access-token:${GH_PAT}@github.com/${FORK_REPO}.git"
+          echo "=== ls-remote with inline creds ==="
+          GIT_TRACE=1 git ls-remote --heads "$AUTH_FORK_URL" 2>&1 | tail -25 || true
           git ls-remote --heads "$AUTH_FORK_URL" \
             | awk '{print $2}' \
             | sed 's|refs/heads/||' \
