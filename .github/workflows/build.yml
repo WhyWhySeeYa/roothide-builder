@@ -44,16 +44,12 @@ jobs:
           env | grep -E 'GIT_CONFIG|GIT_ASKPASS|GIT_TERMINAL' || echo "(none)"
           echo "=== global config ==="
           git config --global --list 2>/dev/null | sed 's/extraheader.*/extraheader=<redacted>/' || echo "(empty)"
-          # 关键：清除 actions/checkout 写入的全局 extraheader（它用 GITHUB_TOKEN 会拦截对 private fork 的访问）
-          git config --global --unset-all http.https://github.com/.extraheader 2>/dev/null || true
-          unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 2>/dev/null || true
+          # 认证方案：用 credential 文件（store helper），完全避开 URL 内嵌凭据
+          CRED_FILE="$(pwd)/.git-credential"
+          printf 'https://x-access-token:%s@github.com\n' "$GH_PAT" > "$CRED_FILE"
+          chmod 600 "$CRED_FILE"
           # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
-          # 认证：拆开拼接避免 GitHub secret 脱敏器把变量名替换掉
-          H="https://"
-          T="x-access-token:"
-          HOST="github.com"
-          AUTH_FORK_URL="${H}${T}${GH_PAT}@${HOST}/${FORK_REPO}.git"
-          git ls-remote --heads "$AUTH_FORK_URL" \
+          git -c credential.helper="store --file=$CRED_FILE" ls-remote --heads "https://github.com/${FORK_REPO}.git" \
             | awk '{print $2}' \
             | sed 's|refs/heads/||' \
             | sort > branches.txt
