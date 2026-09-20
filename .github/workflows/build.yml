@@ -43,11 +43,12 @@ jobs:
             | sed 's|refs/heads/||' \
             | sort > branches.txt
           echo "branch list: $(wc -l < branches.txt) branches"
-          if ! git diff --quiet branches.txt; then
-            git add branches.txt
+          # untracked 文件也要检测：先 add 再比较
+          git add branches.txt
+          if ! git diff --cached --quiet; then
             git -c user.name="builder-bot" \
               -c user.email="bot@users.noreply.github.com" \
-              commit -m "chore: refresh branch list"
+              commit -m "chore: refresh branch list ($(wc -l < branches.txt) branches)"
             git push origin HEAD:main
             echo "branches.txt updated"
           else
