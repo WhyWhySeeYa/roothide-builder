@@ -9,7 +9,7 @@ on:
         default: 'glass-rc7-speed-test'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: builder
@@ -33,6 +33,26 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Refresh branch list for Shortcuts picker
+        run: |
+          set -euo pipefail
+          # 拉取上游全部分支，写入 branches.txt（快捷指令用纯文本选择）
+          git ls-remote --heads "$UPSTREAM_REPO" \
+            | awk '{print $2}' \
+            | sed 's|refs/heads/||' \
+            | sort > branches.txt
+          echo "branch list: $(wc -l < branches.txt) branches"
+          if ! git diff --quiet branches.txt; then
+            git add branches.txt
+            git -c user.name="builder-bot" \
+              -c user.email="bot@users.noreply.github.com" \
+              commit -m "chore: refresh branch list"
+            git push origin HEAD:main
+            echo "branches.txt updated"
+          else
+            echo "branches.txt unchanged"
+          fi
 
       - name: Fetch upstream branch
         run: |
