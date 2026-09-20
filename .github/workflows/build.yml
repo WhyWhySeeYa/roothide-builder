@@ -35,23 +35,13 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Debug GH_PAT presence
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
-        run: |
-          if [ -n "$GH_PAT" ]; then
-            echo "GH_PAT is set, length=${#GH_PAT}"
-          else
-            echo "GH_PAT is EMPTY"
-          fi
-
       - name: Refresh branch list for Shortcuts picker
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
           # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
-          AUTH_FORK_URL="https://x-access-token:${GH_PAT}@github.com/${FORK_REPO}.git"
+          AUTH_FORK_URL="https://${GH_PAT}@github.com/${FORK_REPO}.git"
           git ls-remote --heads "$AUTH_FORK_URL" \
             | awk '{print $2}' \
             | sed 's|refs/heads/||' \
@@ -75,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="${{ github.event.inputs.upstream_branch }}"
-          AUTH_FORK_URL="https://x-access-token:${GH_PAT}@github.com/${FORK_REPO}.git"
+          AUTH_FORK_URL="https://${GH_PAT}@github.com/${FORK_REPO}.git"
 
           git init -q fork-sync
           cd fork-sync
