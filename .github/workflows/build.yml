@@ -40,6 +40,8 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
+          # 关键：清除 actions/checkout 写入的全局 extraheader（它用 GITHUB_TOKEN 会拦截对 private fork 的访问）
+          git config --global --unset-all http.https://github.com/.extraheader 2>/dev/null || true
           # 拉取 fork 全部分支（含用户自建分支），写入 branches.txt（快捷指令用纯文本选择）
           # 认证：拆开拼接避免 GitHub secret 脱敏器把变量名替换掉
           H="https://"
@@ -68,9 +70,9 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
+          # 清除 actions/checkout 的全局 extraheader，避免拦截 private fork 认证
+          git config --global --unset-all http.https://github.com/.extraheader 2>/dev/null || true
           BRANCH="${{ github.event.inputs.upstream_branch }}"
-          AUTH_FORK_URL="https://github.com/${FORK_REPO}.git"
-          GIT_AUTH=(-c credential.helper= -c http.extraHeader="Authorization: Bearer ${GH_PAT}")
 
           # 认证：拼接避免 secret 脱敏
           H="https://"
