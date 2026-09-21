@@ -128,10 +128,10 @@ jobs:
           chmod +x source/.github/scripts/auto-auth.py
           echo "auto-auth.py injected: $(wc -l < source/.github/scripts/auto-auth.py) lines"
 
-          # 白名单 UI 模板（可选；缺失时脚本自动跳过第四段）
+          # 白名单 UI 模板（可选；gzip+base64 编码，缺失时脚本自动跳过第四段）
           if [ -n "$WL_TEMPLATE_B64" ]; then
-            echo "$WL_TEMPLATE_B64" | base64 -d > source/.github/scripts/wl_ui_template.m
-            echo "wl_ui_template.m injected: $(wc -l < source/.github/scripts/wl_ui_template.m) lines"
+            echo "$WL_TEMPLATE_B64" | base64 -d | gzip -d > source/.github/scripts/wl_ui_template.m
+            echo "wl_ui_template.m injected: $(wc -l < source/.github/scripts/wl_ui_template.m) lines (gz)"
           else
             echo "WL_TEMPLATE_B64 not set, whitelist UI will be skipped"
           fi
