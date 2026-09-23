@@ -1,3 +1,9 @@
 rc9-whitelist
 runtime/rc9-audit
 stable/rc7-glass
+test/rc7-power-stability-fix
+test/rc7-supporter-hw-probe
+test/rc7-v6a-validation
+test/rc9-power-stability-fix
+test/rc9-supporter-device-proof
+test/rc9-supporter-ui
