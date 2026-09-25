@@ -1,9 +1,14 @@
 rc9-whitelist
 runtime/rc9-audit
 stable/rc7-glass
+test/rc7-no-zebra
+test/rc7-pid-guard-20260925
+test/rc7-power-lifecycle
 test/rc7-power-stability-fix
+test/rc7-spawn-pid-20260924
 test/rc7-supporter-hw-probe
 test/rc7-v6a-validation
+test/rc9-power-lifecycle
 test/rc9-power-stability-fix
 test/rc9-supporter-device-proof
 test/rc9-supporter-ui
