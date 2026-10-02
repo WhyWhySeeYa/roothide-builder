@@ -261,8 +261,8 @@ jobs:
         run: |
           set -euo pipefail
           cd source
-          TAG="auto-${sha:0:10}"
-          # 已存在则跳过
+          TAG="auto-${sha:0:10}-r${GITHUB_RUN_NUMBER}"
+          # 保险：若同名仍存在则跳过
           if gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
             echo "Release $TAG already exists in $TARGET_REPO, skipping."
             exit 0
